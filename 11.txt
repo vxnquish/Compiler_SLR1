@@ -1,0 +1,1 @@
+type id ( ) { id = - id + id * ( id + num ) ; }

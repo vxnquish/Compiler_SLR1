@@ -1,0 +1,1 @@
+type id ; type id = num ; type id = id + id ;

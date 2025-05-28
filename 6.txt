@@ -1,0 +1,1 @@
+type id ( type id ) { return id ; }

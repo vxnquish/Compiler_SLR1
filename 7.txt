@@ -1,0 +1,1 @@
+type id ( ) { if ( id == num ) id = num ; else id = num + num ; }
