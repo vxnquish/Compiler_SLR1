@@ -2,7 +2,7 @@
 
 ## Compiler Term Project
 - There are two SLR(1) Parsers: both use Stack, but have different outputs.
-- Version 1 has no indentations, and uses paranthases.
+- Version 1 has no indentations, and uses parentheses.
 - Version 2 uses indentations.
 - There are several sample inputs.
 
