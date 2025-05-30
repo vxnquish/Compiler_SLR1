@@ -100,45 +100,64 @@ class SLRParser:
         for symbol in self.grammar.nonterminals:
             self.first_sets[symbol] = set()
         
-        # Add epsilon to FIRST sets for nullable nonterminals
+        # Add epsilon to empty string symbol
+        self.first_sets[''] = {''}
+        
+        # Iteratively compute FIRST sets
         changed = True
         while changed:
             changed = False
             for lhs, rhs in self.grammar.rules:
+                old_size = len(self.first_sets[lhs])
+                
                 if not rhs:  # epsilon production
-                    if '' not in self.first_sets[lhs]:
-                        self.first_sets[lhs].add('')
-                        changed = True
+                    self.first_sets[lhs].add('')
                 else:
-                    # Add FIRST(rhs[0]) to FIRST(lhs)
-                    old_size = len(self.first_sets[lhs])
-                    if rhs[0] in self.grammar.terminals:
-                        self.first_sets[lhs].add(rhs[0])
-                    else:
-                        self.first_sets[lhs].update(self.first_sets[rhs[0]] - {''})
-                        
-                        # If rhs[0] can derive epsilon, check rhs[1], etc.
-                        i = 0
-                        while i < len(rhs) and '' in self.first_sets.get(rhs[i], set()):
-                            if i + 1 < len(rhs):
-                                if rhs[i + 1] in self.grammar.terminals:
-                                    self.first_sets[lhs].add(rhs[i + 1])
-                                else:
-                                    self.first_sets[lhs].update(self.first_sets[rhs[i + 1]] - {''})
-                            i += 1
-                        
-                        # If all symbols can derive epsilon
-                        if i == len(rhs) and all('' in self.first_sets.get(sym, set()) for sym in rhs):
-                            self.first_sets[lhs].add('')
-                    
-                    if len(self.first_sets[lhs]) > old_size:
-                        changed = True
+                    # Compute FIRST of the entire RHS sequence
+                    first_rhs = self.get_first_of_sequence(rhs)
+                    self.first_sets[lhs].update(first_rhs)
+                
+                if len(self.first_sets[lhs]) > old_size:
+                    changed = True
+    
+    def get_first_of_sequence(self, sequence):
+        """Compute FIRST set for a sequence of symbols"""
+        if not sequence:
+            return {''}
+        
+        result = set()
+        all_have_epsilon = True
+        
+        for symbol in sequence:
+            if symbol in self.grammar.terminals:
+                result.add(symbol)
+                all_have_epsilon = False
+                break
+            elif symbol in self.first_sets:
+                # Add FIRST(symbol) - {epsilon}
+                result.update(self.first_sets[symbol] - {''})
+                # If symbol doesn't have epsilon, stop
+                if '' not in self.first_sets[symbol]:
+                    all_have_epsilon = False
+                    break
+            else:
+                # Symbol not yet computed, assume no epsilon for now
+                all_have_epsilon = False
+                break
+        
+        # If all symbols can derive epsilon, add epsilon to result
+        if all_have_epsilon:
+            result.add('')
+        
+        return result
     
     def build_follow_sets(self):
         # Initialize FOLLOW sets
         for symbol in self.grammar.nonterminals:
             self.follow_sets[symbol] = set()
-        self.follow_sets["Program"] = {"$"}
+        
+        # Start symbol gets $ in its FOLLOW set
+        self.follow_sets["Program'"] = {"$"}
         
         changed = True
         while changed:
@@ -148,9 +167,10 @@ class SLRParser:
                     if symbol in self.grammar.nonterminals:
                         old_size = len(self.follow_sets[symbol])
                         
-                        # Add FIRST(beta) - {epsilon} to FOLLOW(symbol)
+                        # Get the sequence after this symbol (beta)
                         beta = rhs[i + 1:]
                         if beta:
+                            # Add FIRST(beta) - {epsilon} to FOLLOW(symbol)
                             first_beta = self.get_first_of_sequence(beta)
                             self.follow_sets[symbol].update(first_beta - {''})
                             
@@ -164,23 +184,8 @@ class SLRParser:
                         if len(self.follow_sets[symbol]) > old_size:
                             changed = True
     
-    def get_first_of_sequence(self, sequence):
-        result = set()
-        for symbol in sequence:
-            if symbol in self.grammar.terminals:
-                result.add(symbol)
-                break
-            else:
-                result.update(self.first_sets[symbol] - {''})
-                if '' not in self.first_sets[symbol]:
-                    break
-        else:
-            # All symbols can derive epsilon
-            result.add('')
-        return result
-    
     def build_lr0_items(self):
-        # Build LR(0) items and states
+        """Build LR(0) items and states"""
         def closure(items):
             result = set(items)
             changed = True
@@ -205,10 +210,10 @@ class SLRParser:
                 lhs, rhs = self.grammar.rules[rule_idx]
                 if dot_pos < len(rhs) and rhs[dot_pos] == symbol:
                     new_items.add((rule_idx, dot_pos + 1))
-            return closure(new_items)
+            return closure(new_items) if new_items else frozenset()
         
-        # Start with initial item
-        initial_item = (0, 0)  # Program' -> .Program
+        # Start with initial item: Program' -> .Program
+        initial_item = (0, 0)
         initial_state = closure({initial_item})
         
         states = [initial_state]
@@ -220,7 +225,7 @@ class SLRParser:
             state = queue.pop(0)
             state_idx = state_map[state]
             
-            # Get all symbols after dot
+            # Get all symbols that can appear after the dot
             symbols = set()
             for rule_idx, dot_pos in state:
                 lhs, rhs = self.grammar.rules[rule_idx]
@@ -240,7 +245,11 @@ class SLRParser:
         return states, transitions
     
     def build_parsing_table(self):
+        """Build the SLR parsing table"""
         states, transitions = self.build_lr0_items()
+        
+        # Initialize parsing table
+        self.parsing_table = {}
         
         # Build ACTION and GOTO tables
         for i, state in enumerate(states):
@@ -249,64 +258,87 @@ class SLRParser:
                 lhs, rhs = self.grammar.rules[rule_idx]
                 
                 if dot_pos < len(rhs):
-                    # Shift actions
+                    # Shift actions for terminals
                     symbol = rhs[dot_pos]
                     if symbol in self.grammar.terminals and (i, symbol) in transitions:
-                        self.parsing_table[(i, symbol)] = ('shift', transitions[(i, symbol)])
+                        next_state = transitions[(i, symbol)]
+                        if (i, symbol) in self.parsing_table:
+                            # Conflict detection
+                            existing = self.parsing_table[(i, symbol)]
+                            if existing != ('shift', next_state):
+                                print(f"Shift/Reduce conflict at state {i}, symbol {symbol}")
+                        self.parsing_table[(i, symbol)] = ('shift', next_state)
                 else:
                     # Reduce actions
-                    if lhs == "Program'" and rhs == ["Program"]:
+                    if rule_idx == 0:  # Program' -> Program
                         # Accept state
                         self.parsing_table[(i, "$")] = ('accept',)
                     else:
                         # Add reduce actions for all terminals in FOLLOW(lhs)
                         for terminal in self.follow_sets[lhs]:
-                            if (i, terminal) not in self.parsing_table:
+                            if (i, terminal) in self.parsing_table:
+                                # Conflict detection
+                                existing = self.parsing_table[(i, terminal)]
+                                if existing != ('reduce', rule_idx):
+                                    print(f"Reduce/Reduce conflict at state {i}, symbol {terminal}")
+                            else:
                                 self.parsing_table[(i, terminal)] = ('reduce', rule_idx)
         
-        # Add GOTO entries
+        # Add GOTO entries for nonterminals
         for (state, symbol), next_state in transitions.items():
             if symbol in self.grammar.nonterminals:
                 self.parsing_table[(state, symbol)] = ('goto', next_state)
     
+    def normalize_token(self, token):
+        """Normalize tokens to match grammar terminals"""
+        if token == "$":
+            return "$"
+        elif token in ["int", "float", "bool", "void"]:
+            return "type"
+        elif token.startswith("id") or token == "identifier":
+            return "id"
+        elif token.startswith("num") or token.isdigit() or token == "number":
+            return "num"
+        elif token in self.grammar.terminals:
+            return token
+        else:
+            # Try to extract the actual token value
+            if ":" in token:
+                return token.split(":")[0]
+            return token
+    
     def parse(self, tokens):
-        # Add end marker
-        tokens = tokens + ["$"]
+        """Parse a list of tokens using SLR parsing"""
+        # Normalize tokens and add end marker
+        normalized_tokens = [self.normalize_token(token) for token in tokens]
+        normalized_tokens.append("$")
         
         stack = [0]  # Stack of states
         symbol_stack = []  # Stack of symbols for parse tree construction
         index = 0
         
-        while True:
+        while index < len(normalized_tokens):
             state = stack[-1]
-            token = tokens[index]
-            
-            # Handle special tokens
-            if token not in self.grammar.terminals:
-                if token.startswith("id:") or token == "id":
-                    lookahead = "id"
-                elif token.startswith("num:") or token == "num":
-                    lookahead = "num"
-                elif token == "int" or token == "float" or token == "bool":
-                    lookahead = "type"
-                else:
-                    lookahead = token
-            else:
-                lookahead = token
+            lookahead = normalized_tokens[index]
             
             if (state, lookahead) not in self.parsing_table:
                 # Error: no action defined
                 expected = []
                 for (s, t) in self.parsing_table:
-                    if s == state:
+                    if s == state and t in self.grammar.terminals:
                         expected.append(t)
-                return False, ErrorReport(index, f"unexpected token '{token}', expected one of: {', '.join(expected)}")
+                expected = list(set(expected))  # Remove duplicates
+                return False, ErrorReport(index, 
+                    f"Unexpected token '{tokens[index] if index < len(tokens) else '$'}' at position {index}. Expected one of: {', '.join(expected)}")
             
             action = self.parsing_table[(state, lookahead)]
             
             if action[0] == 'shift':
-                stack.append(action[1])
-                symbol_stack.append(ParseTree(token))
+                next_state = action[1]
+                stack.append(next_state)
+                # Use original token for parse tree
+                original_token = tokens[index] if index < len(tokens) else "$"
+                symbol_stack.append(ParseTree(original_token))
                 index += 1
             
             elif action[0] == 'reduce':
@@ -316,7 +348,8 @@ class SLRParser:
                 # Pop |rhs| states and symbols
                 children = []
                 for _ in range(len(rhs)):
-                    stack.pop()
+                    if stack:
+                        stack.pop()
                     if symbol_stack:
                         children.insert(0, symbol_stack.pop())
                 
@@ -325,23 +358,58 @@ class SLRParser:
                 symbol_stack.append(node)
                 
                 # Push GOTO state
-                state = stack[-1]
-                if (state, lhs) in self.parsing_table:
-                    goto_action = self.parsing_table[(state, lhs)]
-                    stack.append(goto_action[1])
+                current_state = stack[-1] if stack else 0
+                if (current_state, lhs) in self.parsing_table:
+                    goto_action = self.parsing_table[(current_state, lhs)]
+                    if goto_action[0] == 'goto':
+                        stack.append(goto_action[1])
+                    else:
+                        return False, ErrorReport(index, f"Expected GOTO action for state {current_state} and symbol {lhs}")
                 else:
-                    return False, ErrorReport(index, f"no GOTO entry for state {state} and symbol {lhs}")
+                    return False, ErrorReport(index, f"No GOTO entry for state {current_state} and symbol {lhs}")
             
             elif action[0] == 'accept':
-                # Success!
-                return True, symbol_stack[0].children[0]  # Return Program node (not Program')
+                # Success! Return the Program node (child of Program')
+                if symbol_stack and symbol_stack[0].children:
+                    return True, symbol_stack[0].children[0]
+                else:
+                    return True, symbol_stack[0] if symbol_stack else ParseTree("Program")
             
             else:
-                return False, ErrorReport(index, f"unknown action: {action}")
+                return False, ErrorReport(index, f"Unknown action: {action}")
+        
+        return False, ErrorReport(index, "Unexpected end of input")
 
 def parser(tokens: List[str]) -> Tuple[bool, Union[ParseTree, ErrorReport]]:
     """
-    Returns (True, parse_tree) on success or (False, ErrorReport) on failure.
+    Parse a list of tokens and return either a parse tree or an error report.
+    
+    Args:
+        tokens: List of tokens to parse
+        
+    Returns:
+        Tuple of (success, result) where:
+        - success is True if parsing succeeded, False otherwise
+        - result is ParseTree if success=True, ErrorReport if success=False
     """
     slr_parser = SLRParser()
-    return slr_parser.parse(tokens) # type: ignore
+    return slr_parser.parse(tokens)
+
+# Example usage and testing
+if __name__ == "__main__":
+    # Test with a simple program
+    test_tokens = [
+        "int", "id:main", "(", ")", "{", 
+        "int", "id:x", ";",
+        "return", "num:0", ";",
+        "}"
+    ]
+    
+    success, result = parser(test_tokens)
+    if success:
+        print("Parsing successful!")
+        print("Parse tree:")
+        print(result)
+    else:
+        print("Parsing failed:")
+        print(f"Error at position {result.position}: {result.message}") # type: ignore

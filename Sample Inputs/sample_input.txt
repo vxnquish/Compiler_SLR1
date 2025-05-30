@@ -1,1 +1,0 @@
-type id ( type id , type id ) { type id = id ( id , num ) ; while ( id == num ) { id = id + num ; } return id ; }

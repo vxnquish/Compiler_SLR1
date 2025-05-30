@@ -1,10 +1,8 @@
 # CAU CSE 52321 Compilers, Spring 2025
 
 ## Compiler Term Project
-- There are two SLR(1) Parsers: both use Stack, but have different outputs.
-- Version 1 has no indentations, and uses parentheses.
-- Version 2 uses indentations.
-- There are several sample inputs.
+- parser.py is a SLR(1) parser, using Stack.
+- There are several sample inputs for testing.
 
 ## How to run:
 - Copy & Paste a sample input into sample_input.txt
@@ -12,3 +10,7 @@
 ```bash
 python3 main.py sample_input.txt
 ```
+
+##
+- The file ORIGINAL_parser.py is the original file given by professor.
+- main.py has not been modified.
